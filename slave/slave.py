@@ -69,10 +69,18 @@ def detect_all_slave_ports() -> List[Tuple[str, int]]:
     print('正在扫描串口...')
     
     ports = serial.tools.list_ports.comports()
-    valid_ports = [p for p in ports if 'wchusbserial' in (p.device or '').lower()]
+    
+    valid_ports = []
+    for p in ports:
+        device = (p.device or '').lower()
+        hwid = (p.hwid or '').lower()
+        desc = (p.description or '').lower()
+        if 'wchusbserial' in device or 'usb' in hwid or 'usb' in desc or 'com' in device:
+            valid_ports.append(p)
     
     if not valid_ports:
         print('未找到有效的 USB 串口设备')
+        print(f'可用串口: {[p.device for p in ports]}')
         return []
     
     print(f'找到 {len(valid_ports)} 个串口，正在识别...')
