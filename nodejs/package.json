@@ -1,0 +1,26 @@
+{
+  "name": "uwb-demo",
+  "version": "1.0.0",
+  "description": "UWB 通信演示 - Electron 版本，基于 NLink 协议实现 MASTER-SLAVE 双向通信",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "cli:master": "node master/send.mjs",
+    "cli:slave": "node slave/receive.mjs"
+  },
+  "keywords": [
+    "uwb",
+    "nlink",
+    "serial",
+    "communication",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "serialport": "^12.0.0"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0"
+  }
+}

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UWB 通信演示</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>UWB 通信演示</h1>
+    </header>
+
+    <div class="main-container">
+      <div class="left-panel">
+        <section class="master-section">
+          <div class="section-header">
+            <h2>MASTER</h2>
+            <div class="status-indicator">
+              <span class="status-dot" id="master-status-dot"></span>
+              <span class="status-text" id="master-status-text">未连接</span>
+            </div>
+          </div>
+          
+          <div class="section-content">
+            <div class="config-row">
+              <label>串口</label>
+              <select id="master-port"></select>
+              <button class="btn-refresh" id="master-refresh" title="刷新">↻</button>
+            </div>
+            <div class="config-row">
+              <button class="btn-connect" id="master-connect">连接 MASTER</button>
+            </div>
+
+            <div class="master-send-section" id="master-send-section" style="display: none;">
+              <div class="target-display">
+                <span class="target-label">目标:</span>
+                <span class="target-value" id="master-target-display">未选择</span>
+                <button class="btn-broadcast" id="master-broadcast">广播</button>
+              </div>
+              <div class="send-row">
+                <input type="text" id="master-input" placeholder="输入消息...">
+                <button class="btn-send" id="master-send">发送</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slaves-section">
+          <div class="section-header">
+            <h2>检测到的 SLAVE</h2>
+            <div class="section-header-buttons">
+              <button class="btn-small" id="scan-slaves-btn" disabled>扫描</button>
+              <button class="btn-small" id="refresh-slaves">刷新</button>
+            </div>
+          </div>
+          <div class="slaves-list" id="slaves-list"></div>
+        </section>
+      </div>
+
+      <div class="right-panel">
+        <div class="panel-header">
+          <h2>消息记录</h2>
+          <button class="btn-small" id="clear-all-msgs">清空</button>
+        </div>
+        <div class="messages-list" id="messages-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <template id="slave-template-remote">
+    <div class="slave-card remote-slave" data-slave-id="">
+      <div class="slave-card-header">
+        <span class="slave-name">SLAVE 0</span>
+        <div class="card-header-right">
+          <button class="btn-set-target">设为目标</button>
+          <button class="btn-small btn-remove-slave">×</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="slave-template-local">
+    <div class="slave-card local-slave" data-slave-id="">
+      <div class="slave-card-header">
+        <span class="slave-name">SLAVE 0</span>
+        <div class="card-header-right">
+          <button class="btn-set-target">设为目标</button>
+          <div class="status-indicator">
+            <span class="status-dot"></span>
+            <span class="status-text">未连接</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="slave-card-content">
+        <div class="config-row">
+          <label>串口</label>
+          <select class="slave-port"></select>
+        </div>
+        <div class="config-row">
+          <button class="btn-connect slave-connect">连接</button>
+          <button class="btn-small btn-remove-slave">×</button>
+        </div>
+
+        <div class="send-section slave-send-section" style="display: none;">
+          <div class="send-label">SLAVE → MASTER</div>
+          <div class="send-row">
+            <input type="text" class="slave-input" placeholder="发送给 MASTER...">
+            <button class="btn-send slave-send">发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
