@@ -18,5 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   onSlaveFound: (callback) => {
     ipcRenderer.on('slave-found', (event, data) => callback(data));
+  },
+
+  onSlaveStatusUpdate: (callback) => {
+    ipcRenderer.on('slave-status-update', (event, data) => callback(data));
   }
 });

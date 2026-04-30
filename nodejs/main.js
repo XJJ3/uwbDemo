@@ -7,12 +7,24 @@ const {
   buildAckFrame, parseAckResponse, ACK_PREFIX
 } = require('./common/nlink-cjs.cjs');
 
+// ==================== 配置项 ====================
+const CONFIG = {
+  POLLING_INTERVAL: 5000,      // 轮询间隔（毫秒）
+  OFFLINE_THRESHOLD: 3,        // 连续超时次数判定离线
+  PING_TIMEOUT: 150,           // PING 超时时间（毫秒）
+  ACK_TIMEOUT: 500,            // ACK 超时时间（毫秒）
+};
+// ================================================
+
 let mainWindow = null;
 const connections = new Map();
 let scanningMode = false;
 let foundSlavesBuffer = [];
 let currentScanSendTime = 0;
 const pendingAckCallbacks = new Map();
+const pendingPongCallbacks = new Map();
+const slaveOnlineStatus = new Map();
+let pollingTimer = null;
 
 const READ_FRAME = Buffer.from([
   0x52, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -89,13 +101,103 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    stopPolling();
     connections.forEach((conn) => {
       if (conn.port && conn.port.isOpen) {
         conn.port.close();
       }
     });
     connections.clear();
+    slaveOnlineStatus.clear();
   });
+}
+
+function updateSlaveOnlineStatus(slaveId, isOnline) {
+  const current = slaveOnlineStatus.get(slaveId) || { status: 'offline', timeoutCount: 0, lastSeen: 0 };
+  
+  if (isOnline) {
+    current.status = 'online';
+    current.timeoutCount = 0;
+    current.lastSeen = Date.now();
+  } else {
+    current.timeoutCount++;
+    if (current.timeoutCount >= CONFIG.OFFLINE_THRESHOLD) {
+      current.status = 'offline';
+    } else if (current.timeoutCount > 0) {
+      current.status = 'maybe-offline';
+    }
+  }
+  
+  slaveOnlineStatus.set(slaveId, current);
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('slave-status-update', {
+      slaveId,
+      status: current.status,
+      timeoutCount: current.timeoutCount,
+      lastSeen: current.lastSeen
+    });
+  }
+}
+
+function startPolling() {
+  if (pollingTimer) return;
+  
+  const doPoll = async () => {
+    if (!connections.has('master') || scanningMode) {
+      return;
+    }
+    
+    const conn = connections.get('master');
+    const slaveIds = Array.from(slaveOnlineStatus.keys());
+    
+    for (const slaveId of slaveIds) {
+      const pingFrame = buildPingFrame(slaveId);
+      const sendTime = Date.now();
+      
+      await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          pendingPongCallbacks.delete(slaveId);
+          updateSlaveOnlineStatus(slaveId, false);
+          console.log(`[轮询] SLAVE ${slaveId} 超时`);
+          resolve();
+        }, CONFIG.PING_TIMEOUT);
+        
+        pendingPongCallbacks.set(slaveId, (id, receiveTime) => {
+          clearTimeout(timer);
+          updateSlaveOnlineStatus(slaveId, true);
+          console.log(`[轮询] SLAVE ${slaveId} 在线, 延迟: ${receiveTime - sendTime}ms`);
+          resolve();
+        });
+        
+        conn.port.write(pingFrame);
+      });
+      
+      await new Promise(r => setTimeout(r, 50));
+    }
+  };
+  
+  pollingTimer = setInterval(doPoll, CONFIG.POLLING_INTERVAL);
+  console.log('[轮询] 开始在线监测');
+}
+
+function stopPolling() {
+  if (pollingTimer) {
+    clearInterval(pollingTimer);
+    pollingTimer = null;
+    console.log('[轮询] 停止在线监测');
+  }
+}
+
+function registerSlave(slaveId) {
+  if (!slaveOnlineStatus.has(slaveId)) {
+    slaveOnlineStatus.set(slaveId, {
+      status: 'online',
+      timeoutCount: 0,
+      lastSeen: Date.now()
+    });
+  }
+  startPolling();
 }
 
 app.whenReady().then(createWindow);
@@ -190,25 +292,37 @@ ipcMain.handle('connect', async (event, { id, port, baudRate }) => {
       const receiveTime = Date.now();
       
       if (id === 'master') {
-        const slaveId = parseAckResponse(data);
-        if (slaveId !== null && pendingAckCallbacks.has(slaveId)) {
-          const cb = pendingAckCallbacks.get(slaveId);
-          pendingAckCallbacks.delete(slaveId);
-          cb(slaveId, receiveTime);
+        // 处理 ACK 响应（消息确认）
+        const ackSlaveId = parseAckResponse(data);
+        if (ackSlaveId !== null && pendingAckCallbacks.has(ackSlaveId)) {
+          const cb = pendingAckCallbacks.get(ackSlaveId);
+          pendingAckCallbacks.delete(ackSlaveId);
+          cb(ackSlaveId, receiveTime);
           return;
         }
-      }
-      
-      if (scanningMode && id === 'master') {
-        const slaveId = parsePongResponse(data);
-        if (slaveId !== null) {
-          const elapsed = receiveTime - currentScanSendTime;
-          console.log(`[扫描] ← 收到 SLAVE ${slaveId} 响应, 延迟: ${elapsed}ms`);
-          foundSlavesBuffer.push(slaveId);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('slave-found', { slaveId });
+        
+        // 处理 PONG 响应（轮询/扫描）
+        const pongSlaveId = parsePongResponse(data);
+        if (pongSlaveId !== null) {
+          // 优先处理轮询回调
+          if (pendingPongCallbacks.has(pongSlaveId)) {
+            const cb = pendingPongCallbacks.get(pongSlaveId);
+            pendingPongCallbacks.delete(pongSlaveId);
+            cb(pongSlaveId, receiveTime);
+            return;
           }
-          return;
+          
+          // 扫描模式下的处理
+          if (scanningMode) {
+            const elapsed = receiveTime - currentScanSendTime;
+            console.log(`[扫描] ← 收到 SLAVE ${pongSlaveId} 响应, 延迟: ${elapsed}ms`);
+            foundSlavesBuffer.push(pongSlaveId);
+            registerSlave(pongSlaveId);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('slave-found', { slaveId: pongSlaveId });
+            }
+            return;
+          }
         }
       }
       
@@ -238,6 +352,12 @@ ipcMain.handle('disconnect', async (event, { id }) => {
     }
     connections.delete(id);
   }
+  
+  if (id === 'master') {
+    stopPolling();
+    slaveOnlineStatus.clear();
+  }
+  
   return { success: true };
 });
 
@@ -274,6 +394,7 @@ ipcMain.handle('send', async (event, { id, data, type, slaveId }) => {
         pendingAckCallbacks.set(slaveId, (ackSlaveId, receiveTime) => {
           const roundTrip = receiveTime - sendStart;
           console.log(`[发送] → SLAVE ${slaveId}, 往返耗时: ${roundTrip}ms (单向约 ${Math.round(roundTrip / 2)}ms)`);
+          updateSlaveOnlineStatus(slaveId, true);
           resolve();
         });
         
@@ -281,9 +402,10 @@ ipcMain.handle('send', async (event, { id, data, type, slaveId }) => {
           if (pendingAckCallbacks.has(slaveId)) {
             console.log(`[发送] → SLAVE ${slaveId}, 未收到 ACK (超时)`);
             pendingAckCallbacks.delete(slaveId);
+            updateSlaveOnlineStatus(slaveId, false);
             resolve();
           }
-        }, 500);
+        }, CONFIG.ACK_TIMEOUT);
       });
       
       await ackPromise;
@@ -309,7 +431,7 @@ ipcMain.handle('scan-slaves', async (event, { startId, endId, timeout }) => {
   const conn = connections.get('master');
   const start = startId || 0;
   const end = endId !== undefined ? endId : 15;
-  const timeoutMs = timeout || 150;
+  const timeoutMs = timeout || CONFIG.PING_TIMEOUT;
 
   scanningMode = true;
   foundSlavesBuffer = [];

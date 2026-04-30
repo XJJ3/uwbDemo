@@ -166,7 +166,8 @@ function createRemoteSlaveCard(slaveId) {
     connected: true,
     element: card,
     port: null,
-    isRemote: true
+    isRemote: true,
+    onlineStatus: 'online'
   });
   
   card.querySelector('.btn-set-target').addEventListener('click', () => {
@@ -186,6 +187,34 @@ function createRemoteSlaveCard(slaveId) {
   });
   
   $('slaves-list').appendChild(card);
+}
+
+function updateSlaveOnlineStatusUI(slaveId, status) {
+  const slaveData = state.slaves.get(slaveId);
+  if (!slaveData || !slaveData.isRemote) return;
+  
+  slaveData.onlineStatus = status;
+  const card = slaveData.element;
+  
+  const dot = card.querySelector('.online-dot');
+  const text = card.querySelector('.online-text');
+  
+  if (dot && text) {
+    dot.classList.remove('maybe-offline', 'offline');
+    text.classList.remove('maybe-offline', 'offline');
+    
+    if (status === 'online') {
+      text.textContent = '在线';
+    } else if (status === 'maybe-offline') {
+      dot.classList.add('maybe-offline');
+      text.classList.add('maybe-offline');
+      text.textContent = '可能离线';
+    } else {
+      dot.classList.add('offline');
+      text.classList.add('offline');
+      text.textContent = '离线';
+    }
+  }
 }
 
 function createLocalSlaveCard(slaveId, autoPort = null) {
@@ -499,6 +528,10 @@ function initEventListeners() {
   
   window.electronAPI.onSlaveFound((data) => {
     createRemoteSlaveCard(data.slaveId);
+  });
+  
+  window.electronAPI.onSlaveStatusUpdate((data) => {
+    updateSlaveOnlineStatusUI(data.slaveId, data.status);
   });
 }
 

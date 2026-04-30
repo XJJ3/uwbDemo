@@ -92,6 +92,44 @@ body {
   box-shadow: 0 0 8px #0f9b0f;
 }
 
+.online-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0f9b0f;
+  box-shadow: 0 0 6px #0f9b0f;
+  transition: all 0.3s;
+}
+
+.online-dot.maybe-offline {
+  background: #f39c12;
+  box-shadow: 0 0 6px #f39c12;
+}
+
+.online-dot.offline {
+  background: #e94560;
+  box-shadow: 0 0 6px #e94560;
+}
+
+.online-text {
+  font-size: 10px;
+  color: #0f9b0f;
+}
+
+.online-text.maybe-offline {
+  color: #f39c12;
+}
+
+.online-text.offline {
+  color: #e94560;
+}
+
 .status-text {
   font-size: 11px;
   color: #888;
