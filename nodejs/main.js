@@ -3,13 +3,16 @@ const { SerialPort } = require('serialport');
 const path = require('path');
 const { 
   sendToSlave, broadcast, establishLink, 
-  buildPingFrame, parsePongResponse, PONG_PREFIX 
+  buildPingFrame, parsePongResponse, PONG_PREFIX,
+  buildAckFrame, parseAckResponse, ACK_PREFIX
 } = require('./common/nlink-cjs.cjs');
 
 let mainWindow = null;
 const connections = new Map();
 let scanningMode = false;
 let foundSlavesBuffer = [];
+let currentScanSendTime = 0;
+const pendingAckCallbacks = new Map();
 
 const READ_FRAME = Buffer.from([
   0x52, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -184,9 +187,23 @@ ipcMain.handle('connect', async (event, { id, port, baudRate }) => {
     });
 
     serialPort.on('data', (data) => {
+      const receiveTime = Date.now();
+      
+      if (id === 'master') {
+        const slaveId = parseAckResponse(data);
+        if (slaveId !== null && pendingAckCallbacks.has(slaveId)) {
+          const cb = pendingAckCallbacks.get(slaveId);
+          pendingAckCallbacks.delete(slaveId);
+          cb(slaveId, receiveTime);
+          return;
+        }
+      }
+      
       if (scanningMode && id === 'master') {
         const slaveId = parsePongResponse(data);
         if (slaveId !== null) {
+          const elapsed = receiveTime - currentScanSendTime;
+          console.log(`[扫描] ← 收到 SLAVE ${slaveId} 响应, 延迟: ${elapsed}ms`);
           foundSlavesBuffer.push(slaveId);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('slave-found', { slaveId });
@@ -231,9 +248,13 @@ ipcMain.handle('send', async (event, { id, data, type, slaveId }) => {
 
   const conn = connections.get(id);
   const buffer = Buffer.from(data, 'hex');
+  
+  const sendStart = Date.now();
 
   if (id === 'master') {
     let frame;
+    let needsAck = false;
+    
     if (type === 'broadcast') {
       frame = broadcast(buffer);
     } else if (type === 'link') {
@@ -242,10 +263,39 @@ ipcMain.handle('send', async (event, { id, data, type, slaveId }) => {
       frame = buildPingFrame(slaveId);
     } else {
       frame = sendToSlave(slaveId, buffer);
+      needsAck = true;
     }
+    
     conn.port.write(frame);
+    await new Promise(resolve => conn.port.drain(resolve));
+    
+    if (needsAck) {
+      const ackPromise = new Promise((resolve) => {
+        pendingAckCallbacks.set(slaveId, (ackSlaveId, receiveTime) => {
+          const roundTrip = receiveTime - sendStart;
+          console.log(`[发送] → SLAVE ${slaveId}, 往返耗时: ${roundTrip}ms (单向约 ${Math.round(roundTrip / 2)}ms)`);
+          resolve();
+        });
+        
+        setTimeout(() => {
+          if (pendingAckCallbacks.has(slaveId)) {
+            console.log(`[发送] → SLAVE ${slaveId}, 未收到 ACK (超时)`);
+            pendingAckCallbacks.delete(slaveId);
+            resolve();
+          }
+        }, 500);
+      });
+      
+      await ackPromise;
+    } else {
+      const sendEnd = Date.now();
+      console.log(`[发送] → SLAVE ${slaveId || 'ALL'}, 发送完成: ${sendEnd - sendStart}ms`);
+    }
   } else {
     conn.port.write(buffer);
+    await new Promise(resolve => conn.port.drain(resolve));
+    const sendEnd = Date.now();
+    console.log(`[发送] → ${id}, 发送完成: ${sendEnd - sendStart}ms`);
   }
 
   return { success: true };
@@ -257,13 +307,13 @@ ipcMain.handle('scan-slaves', async (event, { startId, endId, timeout }) => {
   }
 
   const conn = connections.get('master');
-  const foundSlaves = [];
   const start = startId || 0;
-  const end = endId !== undefined ? endId : 255;
-  const timeoutMs = timeout || 100;
+  const end = endId !== undefined ? endId : 15;
+  const timeoutMs = timeout || 150;
 
   scanningMode = true;
   foundSlavesBuffer = [];
+  console.log(`[扫描] 开始扫描 SLAVE ${start}-${end}, 超时 ${timeoutMs}ms/ID`);
 
   return new Promise((resolve) => {
     let currentId = start;
@@ -274,6 +324,7 @@ ipcMain.handle('scan-slaves', async (event, { startId, endId, timeout }) => {
       if (responseTimer) clearTimeout(responseTimer);
       if (scanTimer) clearTimeout(scanTimer);
       scanningMode = false;
+      console.log('[扫描] 结束, 发现:', foundSlavesBuffer);
     };
 
     const probeNext = () => {
@@ -284,9 +335,15 @@ ipcMain.handle('scan-slaves', async (event, { startId, endId, timeout }) => {
       }
 
       const pingFrame = buildPingFrame(currentId);
+      currentScanSendTime = Date.now();
       conn.port.write(pingFrame);
+      console.log(`[扫描] 探测 SLAVE ${currentId}, 发送时间: ${currentScanSendTime}`);
 
       responseTimer = setTimeout(() => {
+        const elapsed = Date.now() - currentScanSendTime;
+        if (elapsed > timeoutMs - 10) {
+          console.log(`[扫描] SLAVE ${currentId} 超时 (${elapsed}ms)`);
+        }
         currentId++;
         probeNext();
       }, timeoutMs);
@@ -295,7 +352,7 @@ ipcMain.handle('scan-slaves', async (event, { startId, endId, timeout }) => {
     scanTimer = setTimeout(() => {
       cleanup();
       resolve({ slaves: foundSlavesBuffer, timeout: true });
-    }, (end - start + 1) * timeoutMs + 1000);
+    }, (end - start + 1) * timeoutMs + 2000);
 
     probeNext();
   });

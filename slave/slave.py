@@ -36,6 +36,7 @@ from common.nlink import (
 BAUD = 921600
 PING_PAYLOAD = b'\x50\x49'
 PONG_PREFIX = b'\x52\x53'
+ACK_PREFIX = b'\x41\x43'
 LOCK_FILE = '/tmp/uwb_slave_ports.lock'
 
 
@@ -243,7 +244,9 @@ class SlaveTerminal:
         now = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
         payload = PONG_PREFIX + bytes([self.slave_id])
         self.ser.write(payload)
-        print(f'\r[{now}] ← 探测请求，回复 ID: {self.slave_id}')
+        self.ser.flush()
+        time.sleep(0.01)
+        print(f'\r[{now}] ← 探测请求，回复 ID: {self.slave_id} (HEX: {payload.hex().upper()})')
         print('> ', end='', flush=True)
     
     def _print_message(self, data: bytes, now: str, is_frame: bool = False):
@@ -253,6 +256,10 @@ class SlaveTerminal:
         except UnicodeDecodeError:
             hex_str = data.hex(' ').upper()
             print(f'\r[{now}] ← MASTER (HEX): {hex_str}')
+        
+        ack = ACK_PREFIX + bytes([self.slave_id])
+        self.ser.write(ack)
+        self.ser.flush()
         print('> ', end='', flush=True)
     
     def send(self, data: bytes):

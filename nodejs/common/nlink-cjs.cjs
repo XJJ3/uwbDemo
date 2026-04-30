@@ -12,6 +12,7 @@ const Role = {
 
 const PING_PAYLOAD = Buffer.from([0x50, 0x49]);
 const PONG_PREFIX = Buffer.from([0x52, 0x53]);
+const ACK_PREFIX = Buffer.from([0x41, 0x43]);
 
 class UserFrame1 {
   constructor(remoteRole, remoteId, payload) {
@@ -90,7 +91,22 @@ function buildPingFrame(slaveId) {
 }
 
 function parsePongResponse(data) {
-  if (data.length >= 3 && data[0] === 0x52 && data[1] === 0x53) {
+  if (data.length >= 3 && 
+      data[0] === PONG_PREFIX[0] && 
+      data[1] === PONG_PREFIX[1]) {
+    return data[2];
+  }
+  return null;
+}
+
+function buildAckFrame(slaveId) {
+  return Buffer.from([ACK_PREFIX[0], ACK_PREFIX[1], slaveId]);
+}
+
+function parseAckResponse(data) {
+  if (data.length >= 3 && 
+      data[0] === ACK_PREFIX[0] && 
+      data[1] === ACK_PREFIX[1]) {
     return data[2];
   }
   return null;
@@ -154,6 +170,7 @@ module.exports = {
   FRAME_HEADER_RESERVED,
   PING_PAYLOAD,
   PONG_PREFIX,
+  ACK_PREFIX,
   checksum,
   verifyChecksum,
   buildUserFrame1,
@@ -162,6 +179,8 @@ module.exports = {
   establishLink,
   buildPingFrame,
   parsePongResponse,
+  buildAckFrame,
+  parseAckResponse,
   parseUserFrame1,
   findAndParseFrame,
   KNOWN_FRAMES

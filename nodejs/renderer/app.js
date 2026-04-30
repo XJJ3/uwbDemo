@@ -529,7 +529,7 @@ async function scanSlaves(startId = 0, endId = 255) {
     const result = await window.electronAPI.scanSlaves({
       startId,
       endId,
-      timeout: 80
+      timeout: 150
     });
     
     if (result.slaves.length > 0) {
